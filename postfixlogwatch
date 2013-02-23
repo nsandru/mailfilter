@@ -1,0 +1,406 @@
+#!/usr/bin/perl
+#
+# postfixlogwatch
+# Copyright (c) 2013 Nick Sandru <nick@nicksandru.com>
+# License: GPLv3
+#
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+use strict;
+use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
+use Pod::Usage;
+my $VERSION='postfixlogwatch-20130223';
+
+# Regular expressions used in maillog processing
+my $RE_client_ip       = qr/ .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
+my $RE_reject          = qr/reject: /;
+my $RE_connect         = qr/smtpd\[.+\]: connect from [^\[\s]+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_nouser          = qr/$RE_client_ip: (550)/;
+my $RE_blocked         = qr/$RE_client_ip: (554)/;
+
+# IP addresses hash
+my %iplist;
+
+select((select(STDOUT), $| = 1)[0]);     # Unbuffer standard output.
+
+# default options, override via command line
+my %opt = (     
+    checkpoint	       => '/var/lib/postfixlogwatch/checkpoint',
+    conndelay	       => 300,
+    nouserdelay	       => 3600,
+    blockdelay	       => 7200,
+    netblockdelay      => 2592000,
+    interval	       => 60,
+    threshold	       => 10,
+    nouserthreshold    => 5,
+    netblockthreshold  => 25,
+    firewall	       => 'SMTPFW',
+    iptables	       => '/sbin/iptables',
+    iptablesargs       => '-m tcp -p tcp',
+    debug              => 'no',
+    logpolicy          => 'no',
+    );
+
+# start here 
+sub main
+
+{
+    my $counter;                    # Line counter
+    my $fwflag;                     # Firewalling switch
+    my $blockflag;                  # /24 netblock firewalling
+    my $modtime;                    # Firewall rule last update
+    my $exptime;                    # Firewall rule expiration time
+    my $delay;
+    my $threshold;
+    my $loadckp = 10000;            # Reload the IP addesses hash table after every 10000 logfile lines
+    my $writeckp = 100;             # Store the hash table into a checkpoint file every 100 logfile lines
+
+    GetOptions(\%opt, 
+        'help|h', 'version', 'man',
+        'checkpoint=s',
+        'conndelay=s', 'nouserdelay=s', 'blockdelay=s', 'netblockdelay=s',
+        'user|u=s', 'interval=s', 'threshold=s', 'nouserthreshold=s', 'netblockthreshold=s',
+        'firewall=s', 'iptables=s', 'iptablesargs=s',
+        'debug=s','logpolicy=s',
+        ) or exit(1);
+    if($opt{help})      { pod2usage(1) }
+    if($opt{man})       { pod2usage(-exitstatus => 0, -verbose => 2) }
+    if ($opt{version})	{ print "postfixlogwatch $VERSION\n"; exit(0) }
+
+# Read postfix log from the standard input
+    MAILLOG: while (<>)
+    {
+        # Create a new checkpoint, after saving the old one
+        if ($writeckp == 0) {
+            rename $opt{checkpoint},(sprintf "%s.old",$opt{checkpoint});
+            if (open CKP, '>', $opt{checkpoint}) {
+                foreach my $ipaddress (keys %iplist) {
+                    if ($opt{debug} eq "yes") {printf STDERR "writeckp %s %s\n",$ipaddress, $iplist{$ipaddress};}
+                    printf CKP "%s %s\n",$ipaddress, $iplist{$ipaddress};
+                }
+                close CKP;
+            }
+            $writeckp = 100;
+        }
+        if ($loadckp == 0) { $loadckp = 10000; $writeckp = 100; }
+        # Reload the IP addresses hash from the last checkpoint after 10000 postfix log lines
+        if ($loadckp == 10000) {
+            if ($opt{debug} eq "yes") {printf STDERR "%s -F %s\n", $opt{iptables}, $opt{firewall};}
+            system(sprintf("%s -F %s", $opt{iptables}, $opt{firewall}));
+            %iplist = ();
+            if (open CKP, '<', $opt{checkpoint}) {
+                while (my $ckpline = <CKP>) {
+                    my ($ipaddress, $iplistval) = split(/ /, $ckpline);
+                    if ($iplistval) {
+                        my ($cnt, $fwf, $modt, $expt) = split(/:/,$iplistval);
+                        $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modt,$expt);
+                        if ($opt{debug} eq "yes") {printf STDERR "loadckp %s %s\n",$ipaddress, $iplist{$ipaddress};}
+                        if (($fwf == 1) || ($fwf == 2) || (($fwf == 3) && ($cnt >= $opt{netblockthreshold}))) {
+                            if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                            if ($opt{logpolicy} eq "yes") {
+                                system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                            }
+                            if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                            system(sprintf "%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress);
+                        }
+                    }
+                }
+                close CKP;
+            }
+            $writeckp = 100;
+            if ($opt{debug} eq "yes") {
+                $loadckp = 2000;
+            }
+        }
+        $loadckp--;
+        $writeckp--;
+        next unless (/$RE_connect/o) || (/$RE_reject/o);
+        foreach my $ipaddress (keys %iplist) {
+            my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
+            if (time() > $expires) {
+                if ($opt{debug} eq "yes") {printf STDERR "delete %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
+                if (($fwf > 0) && ($fwf < 3)) {
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    if ($opt{logpolicy} eq "yes") {
+                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                    }
+                    if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                }
+                if (($fwf == 3) && ($cnt >= $opt{netblockthreshold})) {
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    if ($opt{logpolicy} eq "yes") {
+                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                    }
+                    if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                }
+                delete $iplist{$ipaddress};
+            } elsif ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0) && ($fwf < 3)) {
+                my $decr = (time() - $modified) / $opt{threshold};
+                if ($decr > $cnt) {
+                    $decr = $cnt;
+                }
+                $cnt = $cnt - $decr;
+                $modified = time();
+                $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modified,$expires);
+                if ($opt{debug} eq "yes") {printf STDERR "decr %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
+            } elsif ((time() > $modified + $opt{blockdelay}) && ($cnt >= $opt{netblockthreshold}) && ($fwf == 3)) {
+                $cnt = $opt{netblockthreshold} - 1;
+                $modified = time();
+                $expires = time() + $opt{netblockdelay};
+                $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modified,$expires);
+                if ($opt{debug} eq "yes") {printf STDERR "decr %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
+                if ($cnt < $opt{netblockthreshold}) {
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    if ($opt{logpolicy} eq "yes") {
+                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                    }
+                    if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                }
+            } elsif ((time() > $modified + $opt{blockdelay}) && ($fwf == 3)) {
+                my $cnt1 = ($expires - time()) / ($opt{netblockdelay} / $opt{netblockthreshold});
+                if ($cnt > ($cnt1 + 1)) {
+                    $cnt = $cnt1 + 1;
+                }
+                $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modified,$expires);
+            }
+        }
+        $threshold = $opt{threshold};
+        $blockflag = 0;
+        if (/$RE_connect/o) {					# connect: lines
+            $delay = $opt{conndelay};
+        } elsif (/$RE_blocked/o) {				# reject: lines
+            $delay = $opt{blockdelay};
+            $threshold = 0;
+            $blockflag = 1;
+        } elsif (/$RE_nouser/o) {
+            $delay = $opt{nouserdelay};
+            $threshold = $opt{nouserthreshold};
+        } else {
+            next;
+        }
+        my $ipaddr = $1;
+        if (exists $iplist{$ipaddr}) {
+            ($counter, $fwflag, $modtime, $exptime) = split(/:/,$iplist{$ipaddr});
+        } else {
+            $counter = 0;
+            $fwflag = 0;
+            $modtime = time();
+            $exptime = $modtime;
+        }
+        if ($exptime < time() + $delay) {
+            $modtime = time();
+            $exptime = $modtime + $delay;
+        }
+        $counter++;
+        if ($counter > $threshold) {
+            if ($fwflag == 0) {
+                $fwflag++;
+                if ($blockflag > 0) {
+                    $fwflag++;
+                }
+                if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
+                if ($opt{logpolicy} eq "yes") {
+                    system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
+                }
+                if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
+                system(sprintf("%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
+                if ($fwflag > 1) {
+                    my ($ip1, $ip2, $ip3, $ip4) = split(/\./,$ipaddr);
+                    my $ip24 = sprintf("%s.%s.%s.0/24",$ip1,$ip2,$ip3);
+                    my $count24 = 0;
+                    my $fwflag24 = 0;
+                    my $modt24 = time();
+                    my $expt24 = $modt24;
+                    if (exists $iplist{$ip24}) {
+                        ($count24, $fwflag24, $modt24, $expt24) = split(/:/,$iplist{$ip24});
+                    }
+                    if ($expt24 < time() + $opt{netblockdelay}) {
+                        $modt24 = time();
+                        $expt24 = $modt24 + $opt{netblockdelay};
+                    }
+                    $count24++;
+                    if ($count24 > $opt{netblockthreshold}) {
+                        $count24 = $opt{netblockthreshold};
+                    }
+                    if (($count24 == $opt{netblockthreshold}) && ($opt{netblockthreshold} > 0)) {
+                        if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24;}
+                        if ($opt{logpolicy} eq "yes") {
+                            system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24));
+                        }
+                        if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24;}
+                        system(sprintf("%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24));
+                    }
+                    $iplist{$ip24} = sprintf("%d:3:%d:%d",$count24,$modt24,$expt24);
+                    if ($opt{debug} eq "yes") {printf STDERR "incr %d %d %s, %s\n", $loadckp, $writeckp, $ip24, $iplist{$ip24};}
+                }
+            }
+        }
+        $iplist{$ipaddr} = sprintf("%d:%d:%d:%d",$counter,$fwflag,$modtime,$exptime);
+        if ($opt{debug} eq "yes") {printf STDERR "incr %d %d %s, %s\n", $loadckp, $writeckp, $ipaddr, $iplist{$ipaddr};}
+        next;
+    }
+
+}
+
+main();
+exit 0;
+
+
+__END__
+
+=pod
+
+=head1 NAME
+
+postfixlogwatch - Postfix logfile-based dynamic firewall update
+
+=head1 SYNOPSIS
+
+B<postfixlogwatch> [I<options>...]
+
+ -h, --help                   Display this help and exit.
+     --version		      Display version and exit.
+
+     --checkpoint=PATH        Checkpoint file path (default: /var/lib/postfixlogwatch/checkpoint).
+     --interval=N             Sliding interval for connections counting (seconds, default: 60).
+     --threshold=N            Connections rate threshold (default: 10 / interval).
+     --conndelay=N            Connection delay for a source of connections above the limit set by
+                              the --threshold parameter (default: 300 seconds).
+     --nouserthreshold=N      Invalid recipients rate threshold (default: 5 / interval).
+     --nouserdelay=N          Connection delay for a source if email sent to invalid recipients above
+                              the limit set by the --nouserthreshold parameter (seconds, default 3600)
+     --blockdelay=N           Connection delay for a source blocked for policy violations
+                              (seconds, default: 86400).
+     --netblockthreshold=N    Policy violations per /24 netblock rate threshold
+                              (default: 25 / interval, disable /24 netblock firewalling: 0).
+     --netblockdelay=N        Sliding interval for /24 netblock policy violations over limit
+                              (default: 2592000 seconds = 30 days)
+     --firewall=STRING        Iptables chain name (default: SMTPFW)
+     --iptables=PATH          Iptables executable path (default: /sbin/iptables)
+     --iptablesargs=STRING    Iptables arguments (default: -m tcp -p tcp)
+     --debug=STRING           yes = debugging on, no (default) = no debugging
+     --logpolicy=STRING       yes = insert iptables LOG policy rules,
+                              no (default) = no iptables logging
+
+=head1 DESCRIPTION
+
+Postfixlogwatch reads the postfix logfile from STDIN, records the sources of connections rejected by the postfix smtpd daemon and maintains a chain of iptables rules that
+block any further tcp/25 connections from the same sources for a predetermined time interval.
+
+The following events are recorded by postfixlogwatch as blocking rules in the iptables chain:
+
+=over 4
+
+=item * SMTP connections exceeding a preset rate from the same source
+
+=item * Attempts to send email to invalid addresses (SMTP error 550) exceeding a preset rate from the same source
+
+=item * Connections from sources listed in DNS-based blocking lists (DNSBLs)
+
+=item * /24 netblocks containing a number of blocked sources exceeding a preset threshold
+
+=back
+
+The iptables rules added by postfixlogwatch are deleted after a preset interval.
+
+Postfixlogwatch saves its internal hash table in a checkpoint file at regular intervals. At startup postfixlogwatch flushes its iptables chain, then
+loads its hash table from the checkpoint file (if it exists) and updates its iptables chain.
+
+=head1 USAGE
+
+=head2 Prerequisites
+
+=over 4
+
+=item * An iptables chain referenced in the INPUT iptables chain and named SMTPFW (default). B<Note: do not filter any internal networks through the SMTPFW chain.>
+
+Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16) bypass the SMTPFW chain:
+
+    Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+    target     prot opt in     out     source               destination
+    ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0
+    ACCEPT     all  --  *      *       10.0.0.0/8           0.0.0.0/0
+    ACCEPT     all  --  *      *       172.16.0.0/12        0.0.0.0/0
+    ACCEPT     all  --  *      *       192.168.0.0/16       0.0.0.0/0
+    SMTPFW     tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:25
+
+=item * A directory for the checkpoint file - default /var/lib/postfixlogwatch/
+
+=back
+
+=head2 Parameters
+
+=over 4
+
+=item * --checkpoint=PATH        Checkpoint file path (default: /var/lib/postfixlogwatch/checkpoint).
+
+=item * --interval=N             Sliding interval for connections counting (default: 60 seconds).
+
+=item * --threshold=N            Connections rate threshold (default: 10 / interval). Connections from the same source that exceed this threshold during the sliding interval trigger the insertion of a blocking rule in the SMTPFW chain.
+
+=item * --conndelay=N            Connection delay for a source of connections above the limit set by the --threshold parameter (default: 300 seconds).
+
+=item * --nouserthreshold=N      Invalid recipients rate threshold (default: 5 / interval). A source of attempts to send email to a number of invalid recipient addresses exceeding this threshold is blocked by a rule added to the SMTPFW chain.
+
+=item * --nouserdelay=N          Connection delay for a source if email sent to invalid recipients above the limit set by the --nouserthreshold parameter (default 3600 seconds = 1 hour).
+
+=item * --blockdelay=N           Connection delay for a source blocked for policy violations (default: 86400 = 1 day).
+
+=item * --netblockthreshold=N    Policy violations per /24 netblock rate threshold (default: 25 / blockdelay, disable /24 netblock firewalling: 0). Policy violations exceeding the rate limit from within the /24 netblock trigger the addition of a blocking rule for the entire netblock to the SMTPFW chain. The block is removed after a short time, but it is reinstated immediately if new policy violations occur. Netblocl firewalling can be turnbed off by setting the --netblockthreshold to 0.
+
+=item * --netblockdelay=N        Sliding interval for /24 netblock policy violations over limit (default: 2592000 seconds = 30 days). Netblocks are recorded by postfixlogwatch for this interval.
+
+=item * --firewall=STRING        Iptables chain name (default: SMTPFW).
+
+=item * --iptables=PATH          Iptables executable path (default: /sbin/iptables).
+
+=item * --iptablesargs=STRING    Iptables arguments (default: -m tcp -p tcp).
+
+=item * --debug=STRING           yes = debugging on, no (default) = no debugging. The debug option generates debugging output sent to STDERR.
+
+=item * --logpolicy=STRING       yes = insert iptables LOG policy rules, no (default) = no iptables logging.
+
+=back
+
+=over 4
+
+=head2 Usage example
+
+=over 4
+
+=item * # tail --follow=name /var/log/mail.log | postfixlogwatch --checkpoint=/var/spool/filter/postfixlogwatch-ckp --threshold=5 --nouserthreshold=3 --blockdelay=86400 --netblockthreshold=10 --firewall=SMTPFW --logpolicy=yes
+
+=back
+
+=head1 HISTORY
+
+
+B<20130223>
+
+=over
+
+  Initial Public Version (postfixlogwatch)
+
+=back
+
+=head1 AUTHOR
+
+S<Nick Sandru E<lt>nick@nicksandru.comE<gt>>
+
+=cut
+
