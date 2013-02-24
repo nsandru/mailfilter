@@ -33,8 +33,6 @@ my $RE_blocked         = qr/$RE_client_ip: (554)/;
 # IP addresses hash
 my %iplist;
 
-select((select(STDOUT), $| = 1)[0]);     # Unbuffer standard output.
-
 # default options, override via command line
 my %opt = (     
     checkpoint	       => '/var/lib/postfixlogwatch/checkpoint',
@@ -71,7 +69,7 @@ sub main
         'help|h', 'version', 'man',
         'checkpoint=s',
         'conndelay=s', 'nouserdelay=s', 'blockdelay=s', 'netblockdelay=s',
-        'user|u=s', 'interval=s', 'threshold=s', 'nouserthreshold=s', 'netblockthreshold=s',
+        'interval=s', 'threshold=s', 'nouserthreshold=s', 'netblockthreshold=s',
         'firewall=s', 'iptables=s', 'iptablesargs=s',
         'debug=s','logpolicy=s',
         ) or exit(1);
