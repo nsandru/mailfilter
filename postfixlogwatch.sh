@@ -42,7 +42,7 @@ done
 /sbin/iptables -A INPUT -s 10.0.0.0/8 -j ACCEPT
 /sbin/iptables -A INPUT -s 172.16.0.0/12 -j ACCEPT
 /sbin/iptables -A INPUT -s 192.168.0.0/16 -j ACCEPT
-/sbin/iptables -A INPUT -j SMTPFW -p tcp -m tcp --dport 25
+/sbin/iptables -A INPUT -j $SMTPFW -p tcp -m tcp --dport 25
 
 # Run postfixlogwatch in the background
 (tail --follow=name $LOGFILE | $POSTFIXLOGWATCH $*)&

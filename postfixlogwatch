@@ -21,7 +21,7 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='postfixlogwatch-20130223';
+my $VERSION='postfixlogwatch-20130224';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
@@ -32,6 +32,8 @@ my $RE_blocked         = qr/$RE_client_ip: (554)/;
 
 # IP addresses hash
 my %iplist;
+
+select((select(STDOUT), $| = 1)[0]);     # Unbuffer standard output.
 
 # default options, override via command line
 my %opt = (     
@@ -122,9 +124,6 @@ sub main
                 $loadckp = 2000;
             }
         }
-        $loadckp--;
-        $writeckp--;
-        next unless (/$RE_connect/o) || (/$RE_reject/o);
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
             if (time() > $expires) {
@@ -146,7 +145,14 @@ sub main
                     system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
                 }
                 delete $iplist{$ipaddress};
-            } elsif ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0) && ($fwf < 3)) {
+            }
+        }
+        $loadckp--;
+        $writeckp--;
+        next unless (/$RE_connect/o) || (/$RE_reject/o);
+        foreach my $ipaddress (keys %iplist) {
+            my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
+            if ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0) && ($fwf < 3)) {
                 my $decr = (time() - $modified) / $opt{threshold};
                 if ($decr > $cnt) {
                     $decr = $cnt;
@@ -376,8 +382,6 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 
 =back
 
-=over 4
-
 =head2 Usage example
 
 =over 4
@@ -388,14 +392,15 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 
 =head1 HISTORY
 
+B<2013/02/24>
 
-B<20130223>
+  Bug fix:
 
-=over
+  - Blocking rule expiration delay
+
+B<2013/02/23>
 
   Initial Public Version (postfixlogwatch)
-
-=back
 
 =head1 AUTHOR
 
