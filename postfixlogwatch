@@ -108,9 +108,9 @@ sub main
                         $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modt,$expt);
                         if ($opt{debug} eq "yes") {printf STDERR "loadckp %s %s\n",$ipaddress, $iplist{$ipaddress};}
                         if (($fwf == 1) || ($fwf == 2) || (($fwf == 3) && ($cnt >= $opt{netblockthreshold}))) {
-                            if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                            if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
                             if ($opt{logpolicy} eq "yes") {
-                                system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                                system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
                             }
                             if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
                             system(sprintf "%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress);
@@ -129,17 +129,17 @@ sub main
             if (time() > $expires) {
                 if ($opt{debug} eq "yes") {printf STDERR "delete %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
                 if (($fwf > 0) && ($fwf < 3)) {
-                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
                     if ($opt{logpolicy} eq "yes") {
-                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
                     }
                     if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
                     system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
                 }
                 if (($fwf == 3) && ($cnt >= $opt{netblockthreshold})) {
-                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
                     if ($opt{logpolicy} eq "yes") {
-                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
                     }
                     if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
                     system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
@@ -168,9 +168,9 @@ sub main
                 $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modified,$expires);
                 if ($opt{debug} eq "yes") {printf STDERR "decr %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
                 if ($cnt < $opt{netblockthreshold}) {
-                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
                     if ($opt{logpolicy} eq "yes") {
-                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
                     }
                     if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
                     system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
@@ -218,9 +218,9 @@ sub main
                 if ($blockflag > 0) {
                     $fwflag++;
                 }
-                if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
+                if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr, $opt{firewall};}
                 if ($opt{logpolicy} eq "yes") {
-                    system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
+                    system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr, $opt{firewall}));
                 }
                 if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
                 system(sprintf("%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
@@ -243,9 +243,9 @@ sub main
                         $count24 = $opt{netblockthreshold};
                     }
                     if (($count24 == $opt{netblockthreshold}) && ($opt{netblockthreshold} > 0)) {
-                        if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24;}
+                        if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24, $opt{firewall};}
                         if ($opt{logpolicy} eq "yes") {
-                            system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix SMTPFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24));
+                            system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24, $opt{firewall}));
                         }
                         if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24;}
                         system(sprintf("%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ip24));
@@ -386,7 +386,7 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 
 =over 4
 
-=item * # tail --follow=name /var/log/mail.log | postfixlogwatch --checkpoint=/var/spool/filter/postfixlogwatch-ckp --threshold=5 --nouserthreshold=3 --blockdelay=86400 --netblockthreshold=10 --firewall=SMTPFW --logpolicy=yes
+=item * # tail --follow=name /var/log/mail.log | postfixlogwatch --checkpoint=/var/cache/postfixfilter/postfixlogwatch-ckp --threshold=5 --nouserthreshold=3 --blockdelay=86400 --netblockthreshold=10 --firewall=SMTPFW --logpolicy=yes
 
 =back
 
@@ -394,9 +394,10 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 
 B<2013/02/24>
 
-  Bug fix:
+  Bug fixes:
 
-  - Blocking rule expiration delay
+  - Iptables LOG policy list the actual name of the chain instead of SMTPFW
+  - Blocking rule still present past expiration
 
 B<2013/02/23>
 
