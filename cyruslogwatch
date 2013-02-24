@@ -1,0 +1,297 @@
+#!/usr/bin/perl
+#
+# cyruslogwatch
+# Copyright (c) 2013 Nick Sandru <nick@nicksandru.com>
+# License: GPLv3
+#
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+use strict;
+use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
+use Pod::Usage;
+my $VERSION='cyruslogwatch-20130223';
+
+# Regular expressions used in maillog processing
+my $RE_client_ip       = qr/ \[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
+my $RE_badimap         = qr/imap\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_badimaps        = qr/imaps\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_badpop3         = qr/pop3\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_badpop3s        = qr/pop3s\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_nouser          = qr/$RE_client_ip .+: user not found: checkpass failed/;
+my $RE_authfail        = qr/$RE_client_ip .+: authentication failure: checkpass failed/;
+
+# IP addresses hash
+my %iplist;
+
+# default options, override via command line
+my %opt = (     
+    checkpoint	       => '/var/lib/cyruslogwatch/checkpoint',
+    conndelay	       => 900,
+    interval	       => 60,
+    threshold	       => 10,
+    firewall	       => 'CYRUSFW',
+    iptables	       => '/sbin/iptables',
+    iptablesargs       => '-m tcp -p tcp',
+    debug              => 'no',
+    logpolicy          => 'no',
+    );
+
+# start here 
+sub main
+
+{
+    my $counter;                    # Line counter
+    my $fwflag;                     # Firewalling switch
+    my $modtime;                    # Firewall rule last update
+    my $exptime;                    # Firewall rule expiration time
+    my $delay;
+    my $threshold;
+    my $loadckp = 10000;            # Reload the IP addesses hash table after every 10000 logfile lines
+    my $writeckp = 100;             # Store the hash table into a checkpoint file every 100 logfile lines
+
+    GetOptions(\%opt, 
+        'help|h', 'version', 'man',
+        'checkpoint=s', 'conndelay=s', 'interval=s', 'threshold=s',
+        'firewall=s', 'iptables=s', 'iptablesargs=s',
+        'debug=s','logpolicy=s',
+        ) or exit(1);
+    if($opt{help})      { pod2usage(1) }
+    if($opt{man})       { pod2usage(-exitstatus => 0, -verbose => 2) }
+    if ($opt{version})	{ print "cyruslogwatch $VERSION\n"; exit(0) }
+
+# Read postfix log from the standard input
+    MAILLOG: while (<>)
+    {
+        # Create a new checkpoint, after saving the old one
+        if ($writeckp == 0) {
+            rename $opt{checkpoint},(sprintf "%s.old",$opt{checkpoint});
+            if (open CKP, '>', $opt{checkpoint}) {
+                foreach my $ipaddress (keys %iplist) {
+                    if ($opt{debug} eq "yes") {printf STDERR "writeckp %s %s\n",$ipaddress, $iplist{$ipaddress};}
+                    printf CKP "%s %s\n",$ipaddress, $iplist{$ipaddress};
+                }
+                close CKP;
+            }
+            $writeckp = 100;
+        }
+        if ($loadckp == 0) { $loadckp = 10000; $writeckp = 100; }
+        # Reload the IP addresses hash from the last checkpoint after 10000 cyrus log lines
+        if ($loadckp == 10000) {
+            if ($opt{debug} eq "yes") {printf STDERR "%s -F %s\n", $opt{iptables}, $opt{firewall};}
+            system(sprintf("%s -F %s", $opt{iptables}, $opt{firewall}));
+            %iplist = ();
+            if (open CKP, '<', $opt{checkpoint}) {
+                while (my $ckpline = <CKP>) {
+                    my ($ipaddress, $iplistval) = split(/ /, $ckpline);
+                    if ($iplistval) {
+                        my ($cnt, $fwf, $modt, $expt) = split(/:/,$iplistval);
+                        $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modt,$expt);
+                        if ($opt{debug} eq "yes") {printf STDERR "loadckp %s %s\n",$ipaddress, $iplist{$ipaddress};}
+                        if ($fwf > 0) {
+                            if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix CYRUSFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                            if ($opt{logpolicy} eq "yes") {
+                                system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix CYRUSFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                            }
+                            if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                            system(sprintf "%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress);
+                        }
+                    }
+                }
+                close CKP;
+            }
+            $writeckp = 100;
+            if ($opt{debug} eq "yes") {
+                $loadckp = 2000;
+            }
+        }
+        foreach my $ipaddress (keys %iplist) {
+            my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
+            if (time() > $expires) {
+                if ($opt{debug} eq "yes") {printf STDERR "delete %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
+                if ($fwf > 0) {
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix CYRUSFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    if ($opt{logpolicy} eq "yes") {
+                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix CYRUSFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                    }
+                    if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                }
+                delete $iplist{$ipaddress};
+            }
+        }
+        $loadckp--;
+        $writeckp--;
+        next unless (/$RE_badpop3/o) || (/$RE_badpop3s/o) || (/$RE_badimap/o) || (/$RE_badimaps/o);
+        foreach my $ipaddress (keys %iplist) {
+            my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
+            if ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0)) {
+                my $decr = (time() - $modified) / $opt{threshold};
+                if ($decr > $cnt) {
+                    $decr = $cnt;
+                }
+                $cnt = $cnt - $decr;
+                $modified = time();
+                $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modified,$expires);
+                if ($opt{debug} eq "yes") {printf STDERR "decr %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
+            }
+        }
+        $threshold = $opt{threshold};
+        if ((/$RE_authfail/o) || (/$RE_nouser/o)) {
+            $delay = $opt{conndelay};
+        } else {
+            next;
+        }
+        my $ipaddr = $1;
+        if (exists $iplist{$ipaddr}) {
+            ($counter, $fwflag, $modtime, $exptime) = split(/:/,$iplist{$ipaddr});
+        } else {
+            $counter = 0;
+            $fwflag = 0;
+            $modtime = time();
+            $exptime = $modtime;
+        }
+        if ($exptime < time() + $delay) {
+            $modtime = time();
+            $exptime = $modtime + $delay;
+        }
+        $counter++;
+        if ($counter > $threshold) {
+            if ($fwflag == 0) {
+                $fwflag++;
+                if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix CYRUSFW-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
+                if ($opt{logpolicy} eq "yes") {
+                    system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix CYRUSFW-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
+                }
+                if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
+                system(sprintf("%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
+            }
+        }
+        $iplist{$ipaddr} = sprintf("%d:%d:%d:%d",$counter,$fwflag,$modtime,$exptime);
+        if ($opt{debug} eq "yes") {printf STDERR "incr %d %d %s, %s\n", $loadckp, $writeckp, $ipaddr, $iplist{$ipaddr};}
+        next;
+    }
+
+}
+
+main();
+exit 0;
+
+
+__END__
+
+=pod
+
+=head1 NAME
+
+cyruslogwatch - Cyrus logfile-based dynamic firewall update
+
+=head1 SYNOPSIS
+
+B<cyruslogwatch> [I<options>...]
+
+ -h, --help                   Display this help and exit.
+     --version		      Display version and exit.
+
+     --checkpoint=PATH        Checkpoint file path (default: /var/lib/cyruslogwatch/checkpoint).
+     --interval=N             Sliding interval for failed logins counting (seconds, default: 60).
+     --threshold=N            Connections rate threshold (default: 10 / interval).
+     --conndelay=N            Connection delay for a source of failed logins above the limit set by
+                              the --threshold parameter (default: 900 seconds).
+     --firewall=STRING        Iptables chain name (default: CYRUSFW)
+     --iptables=PATH          Iptables executable path (default: /sbin/iptables)
+     --iptablesargs=STRING    Iptables arguments (default: -m tcp -p tcp)
+     --debug=STRING           yes = debugging on, no (default) = no debugging
+     --logpolicy=STRING       yes = insert iptables LOG policy rules,
+                              no (default) = no iptables logging
+
+=head1 DESCRIPTION
+
+Cyruslogwatch reads the cyrus logfile from STDIN, records the sources of failed IMAP or POP3 logins and maintains a chain of iptables rules that
+block any further connections from the same sources for a predetermined time interval.
+
+The iptables rules added by cyruslogwatch are deleted after a preset interval.
+
+Cyruslogwatch saves its internal hash table in a checkpoint file at regular intervals. At startup cyruslogwatch flushes its iptables chain, then
+loads its hash table from the checkpoint file (if it exists) and updates its iptables chain.
+
+=head1 USAGE
+
+=head2 Prerequisites
+
+=over 4
+
+=item * An iptables chain referenced in the INPUT iptables chain and named CYRUSFW (default). B<Note: do not filter any internal networks through the CYRUSFW chain.>
+
+Example - POP3(s) and IMAP(s) connections from local networks (local interface, 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16) bypass the CYRUSFW chain:
+
+    Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
+    target     prot opt in     out     source               destination
+    ACCEPT     all  --  lo     *       0.0.0.0/0            0.0.0.0/0
+    ACCEPT     all  --  *      *       10.0.0.0/8           0.0.0.0/0
+    ACCEPT     all  --  *      *       172.16.0.0/12        0.0.0.0/0
+    ACCEPT     all  --  *      *       192.168.0.0/16       0.0.0.0/0
+    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:110
+    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:143
+    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:993
+    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:995
+
+=item * A directory for the checkpoint file - default /var/lib/cyruslogwatch/
+
+=back
+
+=head2 Parameters
+
+=over 4
+
+=item * --checkpoint=PATH        Checkpoint file path (default: /var/lib/cyruslogwatch/checkpoint).
+
+=item * --interval=N             Sliding interval for failed logins counting (default: 60 seconds).
+
+=item * --threshold=N            Failed logins rate threshold (default: 10 / interval). Failed logins from the same source that exceed this threshold during the sliding interval trigger the insertion of a blocking rule in the CYRUSFW chain.
+
+=item * --conndelay=N            Connection delay for a source of failed logins above the limit set by the --threshold parameter (default: 900 seconds).
+
+=item * --firewall=STRING        Iptables chain name (default: CYRUSFW).
+
+=item * --iptables=PATH          Iptables executable path (default: /sbin/iptables).
+
+=item * --iptablesargs=STRING    Iptables arguments (default: -m tcp -p tcp).
+
+=item * --debug=STRING           yes = debugging on, no (default) = no debugging. The debug option generates debugging output sent to STDERR.
+
+=item * --logpolicy=STRING       yes = insert iptables LOG policy rules, no (default) = no iptables logging.
+
+=back
+
+=head2 Usage example
+
+=over 4
+
+=item * # tail --follow=name /var/log/mail.log | cyruslogwatch --checkpoint=/var/spool/filter/cyruslogwatch-ckp --threshold=5 --firewall=CYRUSFW --logpolicy=yes
+
+=back
+
+=head1 HISTORY
+
+B<2013/02/23>
+
+  Initial Public Version (cyruslogwatch)
+
+=head1 AUTHOR
+
+S<Nick Sandru E<lt>nick@nicksandru.comE<gt>>
+
+=cut
+
