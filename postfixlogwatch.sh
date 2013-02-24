@@ -15,12 +15,29 @@ POSTFIXLOGWATCH=/usr/sbin/postfixlogwatch
 LOGFILE=/var/log/maillog
 
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+CKPDIR=/var/lib/postfixlogwatch
+SMTPFW=SMTPFW
 
+for ARG in $* ; do
+  ARGN=`echo $ARG | cut -f1 -d=`
+  ARGV=`echo $ARG | cut -f2 -d=`
+  case $ARGN in
+  --checkpoint)
+    CKPDIR=`dirname $ARGV`
+    test -d $CKPDIR || mkdir -p $CKPDIR
+    ;;
+  --firewall)
+    SMTPFW=$ARGV
+    ;;
+  *)
+    ;;
+  esac
+done
 # Initialize the iptables chains
 /sbin/iptables -F INPUT
-/sbin/iptables -F SMTPFW
-/sbin/iptables -X SMTPFW
-/sbin/iptables -N SMTPFW
+/sbin/iptables -F $SMTPFW
+/sbin/iptables -X $SMTPFW
+/sbin/iptables -N $SMTPFW
 /sbin/iptables -A INPUT -i lo -j ACCEPT
 /sbin/iptables -A INPUT -s 10.0.0.0/8 -j ACCEPT
 /sbin/iptables -A INPUT -s 172.16.0.0/12 -j ACCEPT

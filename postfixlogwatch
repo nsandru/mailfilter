@@ -176,6 +176,7 @@ sub main
                 if ($cnt > ($cnt1 + 1)) {
                     $cnt = $cnt1 + 1;
                 }
+                if ($opt{debug} eq "yes") {printf STDERR "set %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
                 $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modified,$expires);
             }
         }
