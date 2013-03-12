@@ -21,7 +21,7 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='cyruslogwatch-20130224';
+my $VERSION='cyruslogwatch-20130312';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ \[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
@@ -71,7 +71,7 @@ sub main
     if($opt{man})       { pod2usage(-exitstatus => 0, -verbose => 2) }
     if ($opt{version})	{ print "cyruslogwatch $VERSION\n"; exit(0) }
 
-# Read postfix log from the standard input
+# Read cyrus log from the standard input
     MAILLOG: while (<>)
     {
         # Create a new checkpoint, after saving the old one
@@ -100,12 +100,12 @@ sub main
                         $iplist{$ipaddress} = sprintf("%d:%d:%d:%d",$cnt,$fwf,$modt,$expt);
                         if ($opt{debug} eq "yes") {printf STDERR "loadckp %s %s\n",$ipaddress, $iplist{$ipaddress};}
                         if ($fwf > 0) {
-                            if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
+                            if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
                             if ($opt{logpolicy} eq "yes") {
-                                system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
+                                system(sprintf("%s -A %s %s -s %s -j LOG --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
                             }
-                            if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
-                            system(sprintf "%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress);
+                            if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                            system(sprintf "%s -A %s %s -s %s -j DROP", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress);
                         }
                     }
                 }
@@ -122,12 +122,12 @@ sub main
             if (time() > $expires) {
                 if ($opt{debug} eq "yes") {printf STDERR "delete %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
                 if ($fwf > 0) {
-                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
+                    if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -D %s %s -s %s -j LOG --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall};}
                     if ($opt{logpolicy} eq "yes") {
-                        system(sprintf("%s -D %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
+                        system(sprintf("%s -D %s %s -s %s -j LOG --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress, $opt{firewall}));
                     }
-                    if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
-                    system(sprintf("%s -D %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
+                    if ($opt{debug} eq "yes") {printf STDERR "%s -D %s %s -s %s -j DROP\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress;}
+                    system(sprintf("%s -D %s %s -s %s -j DROP", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddress));
                 }
                 delete $iplist{$ipaddress};
             }
@@ -180,12 +180,12 @@ sub main
         if ($counter > $threshold) {
             if ($fwflag == 0) {
                 $fwflag++;
-                if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr, $opt{firewall};}
+                if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr, $opt{firewall};}
                 if ($opt{logpolicy} eq "yes") {
-                    system(sprintf("%s -A %s %s -s %s -j LOG -m state --state NEW --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr, $opt{firewall}));
+                    system(sprintf("%s -A %s %s -s %s -j LOG --log-prefix %s-", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr, $opt{firewall}));
                 }
-                if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
-                system(sprintf("%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
+                if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
+                system(sprintf("%s -A %s %s -s %s -j DROP", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
             }
         }
         $iplist{$ipaddr} = sprintf("%d:%d:%d:%d",$counter,$fwflag,$modtime,$exptime);
@@ -294,6 +294,12 @@ Example - POP3(s) and IMAP(s) connections from local networks (local interface, 
 =back
 
 =head1 HISTORY
+
+B<2013/03/12>
+
+  Bug fix:
+
+  - Removed the '-m state --state NEW' parameter in the filter command lines
 
 B<2013/02/24>
 
