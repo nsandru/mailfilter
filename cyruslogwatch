@@ -25,10 +25,10 @@ my $VERSION='cyruslogwatch-20130312';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ \[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
-my $RE_badimap         = qr/imap\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
-my $RE_badimaps        = qr/imaps\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
-my $RE_badpop3         = qr/pop3\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
-my $RE_badpop3s        = qr/pop3s\[.+\]: badlogin: .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_badimap         = qr/imap\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_badimaps        = qr/imaps\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_badpop3         = qr/pop3\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
+my $RE_badpop3s        = qr/pop3s\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
 my $RE_nouser          = qr/$RE_client_ip .+: user not found: checkpass failed/;
 my $RE_authfail        = qr/$RE_client_ip .+: authentication failure: checkpass failed/;
 
@@ -294,6 +294,12 @@ Example - POP3(s) and IMAP(s) connections from local networks (local interface, 
 =back
 
 =head1 HISTORY
+
+B<2013/03/22>
+
+  Bug fix:
+
+  - 'badlogin' regex modified to recognize hosts without hostname string
 
 B<2013/03/12>
 
