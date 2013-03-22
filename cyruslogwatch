@@ -21,7 +21,7 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='cyruslogwatch-20130312';
+my $VERSION='cyruslogwatch-20130322';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ \[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
