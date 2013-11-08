@@ -21,7 +21,7 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='cyruslogwatch-20130322';
+my $VERSION='cyruslogwatch-20131108';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ \[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
@@ -134,7 +134,7 @@ sub main
         }
         $loadckp--;
         $writeckp--;
-        next unless (/$RE_badpop3/o) || (/$RE_badpop3s/o) || (/$RE_badimap/o) || (/$RE_badimaps/o);
+        next unless (/$RE_badpop3/) || (/$RE_badpop3s/) || (/$RE_badimap/) || (/$RE_badimaps/);
         # Decrease the count for existing records
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
@@ -153,7 +153,7 @@ sub main
         }
         $threshold = $opt{threshold};
         # Set the connection delay for IP addresses that are sources of failed logins
-        if ((/$RE_authfail/o) || (/$RE_nouser/o)) {
+        if ((/$RE_authfail/) || (/$RE_nouser/)) {
             $delay = $opt{conndelay};
         } else {
             next;
@@ -294,6 +294,10 @@ Example - POP3(s) and IMAP(s) connections from local networks (local interface, 
 =back
 
 =head1 HISTORY
+
+B<2013/11/08>
+
+  Minor fixes
 
 B<2013/03/22>
 

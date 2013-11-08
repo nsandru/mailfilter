@@ -21,7 +21,7 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='postfixlogwatch-20130224';
+my $VERSION='postfixlogwatch-20131108';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
@@ -149,7 +149,7 @@ sub main
         }
         $loadckp--;
         $writeckp--;
-        next unless (/$RE_connect/o) || (/$RE_reject/o);
+        next unless (/$RE_connect/) || (/$RE_reject/);
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
             if ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0) && ($fwf < 3)) {
@@ -186,13 +186,13 @@ sub main
         }
         $threshold = $opt{threshold};
         $blockflag = 0;
-        if (/$RE_connect/o) {					# connect: lines
+        if (/$RE_connect/) {					# connect: lines
             $delay = $opt{conndelay};
-        } elsif (/$RE_blocked/o) {				# reject: lines
+        } elsif (/$RE_blocked/) {				# reject: lines
             $delay = $opt{blockdelay};
             $threshold = 0;
             $blockflag = 1;
-        } elsif (/$RE_nouser/o) {
+        } elsif (/$RE_nouser/) {
             $delay = $opt{nouserdelay};
             $threshold = $opt{nouserthreshold};
         } else {
@@ -391,6 +391,10 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 =back
 
 =head1 HISTORY
+
+B<2013/11/08>
+
+  Minor fixes
 
 B<2013/02/24>
 
