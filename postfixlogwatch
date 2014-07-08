@@ -21,11 +21,12 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='postfixlogwatch-20131108';
+my $VERSION='postfixlogwatch-20140707';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
 my $RE_reject          = qr/reject: /;
+my $RE_authfail        = qr/smtpd\[.+\]: too many errors after AUTH from [^\[\s]+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
 my $RE_connect         = qr/smtpd\[.+\]: connect from [^\[\s]+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
 my $RE_nouser          = qr/$RE_client_ip: (550)/;
 my $RE_blocked         = qr/$RE_client_ip: (554)/;
@@ -124,6 +125,7 @@ sub main
                 $loadckp = 2000;
             }
         }
+	# Delete expired records
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
             if (time() > $expires) {
@@ -149,10 +151,12 @@ sub main
         }
         $loadckp--;
         $writeckp--;
-        next unless (/$RE_connect/) || (/$RE_reject/);
+        next unless (/$RE_connect/) || (/$RE_reject/) || (/$RE_authfail/);
+	# Decrease the count for existing records
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
             if ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0) && ($fwf < 3)) {
+		# The counter decrease rate is (interval from last modification) / (threshold)
                 my $decr = (time() - $modified) / $opt{threshold};
                 if ($decr > $cnt) {
                     $decr = $cnt;
@@ -186,31 +190,38 @@ sub main
         }
         $threshold = $opt{threshold};
         $blockflag = 0;
+	# Set the connection delay for IP addresses that are sources of abuse
         if (/$RE_connect/) {					# connect: lines
             $delay = $opt{conndelay};
-        } elsif (/$RE_blocked/) {				# reject: lines
+        } elsif ((/$RE_blocked/) || (/$RE_authfail/)) {		# reject: and 'too many errors after AUTH' lines
             $delay = $opt{blockdelay};
             $threshold = 0;
             $blockflag = 1;
         } elsif (/$RE_nouser/) {
-            $delay = $opt{nouserdelay};
+            $delay = $opt{nouserdelay};				# Invalid address
             $threshold = $opt{nouserthreshold};
         } else {
             next;
         }
         my $ipaddr = $1;
         if (exists $iplist{$ipaddr}) {
+	# Update an existing record
             ($counter, $fwflag, $modtime, $exptime) = split(/:/,$iplist{$ipaddr});
         } else {
+	# Create new record
             $counter = 0;
             $fwflag = 0;
             $modtime = time();
             $exptime = $modtime;
         }
+	# Update the modification and expiration times
+	# The record will be deleted after the connection delay has elapsed - unless the expiration time is extended in the meantime
         if ($exptime < time() + $delay) {
             $modtime = time();
             $exptime = $modtime + $delay;
         }
+	# Increase the counter associated to the IP address for each abusive connection
+	# If it becomes greater than the threshold add a blocking rule for the IP address
         $counter++;
         if ($counter > $threshold) {
             if ($fwflag == 0) {
@@ -225,6 +236,8 @@ sub main
                 if ($opt{debug} eq "yes") {printf STDERR "%s -A %s %s -s %s -j DROP -m state --state NEW\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr;}
                 system(sprintf("%s -A %s %s -s %s -j DROP -m state --state NEW", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr));
                 if ($fwflag > 1) {
+		# Increase the counter associated to the /24 IP block for each abusive connection
+		# If it becomes greater than the threshold add a blocking rule for the IP block
                     my ($ip1, $ip2, $ip3, $ip4) = split(/\./,$ipaddr);
                     my $ip24 = sprintf("%s.%s.%s.0/24",$ip1,$ip2,$ip3);
                     my $count24 = 0;
@@ -289,8 +302,8 @@ B<postfixlogwatch> [I<options>...]
      --nouserthreshold=N      Invalid recipients rate threshold (default: 5 / interval).
      --nouserdelay=N          Connection delay for a source if email sent to invalid recipients above
                               the limit set by the --nouserthreshold parameter (seconds, default 3600)
-     --blockdelay=N           Connection delay for a source blocked for policy violations
-                              (seconds, default: 86400).
+     --blockdelay=N           Connection delay for a source blocked for policy violations or failed
+                              SMTPAUTH logins (seconds, default: 86400).
      --netblockthreshold=N    Policy violations per /24 netblock rate threshold
                               (default: 25 / interval, disable /24 netblock firewalling: 0).
      --netblockdelay=N        Sliding interval for /24 netblock policy violations over limit
@@ -316,6 +329,8 @@ The following events are recorded by postfixlogwatch as blocking rules in the ip
 =item * Attempts to send email to invalid addresses (SMTP error 550) exceeding a preset rate from the same source
 
 =item * Connections from sources listed in DNS-based blocking lists (DNSBLs)
+
+=item * Too many SMTP AUTH errors (failed SMTP AUTH logins)
 
 =item * /24 netblocks containing a number of blocked sources exceeding a preset threshold
 
@@ -391,6 +406,11 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 =back
 
 =head1 HISTORY
+
+B<2014/07/07>
+
+  Added AUTH errors scanning
+  Added more comments
 
 B<2013/11/08>
 

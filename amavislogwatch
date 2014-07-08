@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-# cyruslogwatch
+# amavislogwatch
 # Copyright (c) 2013 Nick Sandru <nick@nicksandru.com>
 # License: GPLv3
 #
@@ -21,27 +21,24 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='cyruslogwatch-20140707';
+my $VERSION='amavislogwatch-20140708';
 
 # Regular expressions used in maillog processing
-my $RE_client_ip       = qr/ \[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
-my $RE_badimap         = qr/imap\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
-my $RE_badimaps        = qr/imaps\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
-my $RE_badpop3         = qr/pop3\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
-my $RE_badpop3s        = qr/pop3s\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
-my $RE_nouser          = qr/$RE_client_ip .+: user not found: checkpass failed/;
-my $RE_authfail        = qr/$RE_client_ip .+: authentication failure: checkpass failed/;
+my $RE_client_ip      = qr/ .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]:.+ /;    # [1.2.3.4]:... 
+my $RE_amablock        = qr/amavis\[.+\]: .+ Blocked /;
+my $RE_amaspam         = qr/ Blocked SPAM /;
+my $RE_amainfect       = qr/ Blocked INFECTED /;
+my $RE_amabanned       = qr/ Blocked BANNED /;
+my $RE_amablocked      = qr/$RE_client_ip/;
 
 # IP addresses hash
 my %iplist;
 
 # default options, override via command line
 my %opt = (     
-    checkpoint	       => '/var/lib/cyruslogwatch/checkpoint',
+    checkpoint	       => '/var/lib/amavislogwatch/checkpoint',
     conndelay	       => 900,
-    interval	       => 60,
-    threshold	       => 10,
-    firewall	       => 'CYRUSFW',
+    firewall	       => 'AMAVISFW',
     iptables	       => '/sbin/iptables',
     iptablesargs       => '-m tcp -p tcp',
     debug              => 'no',
@@ -63,15 +60,15 @@ sub main
 
     GetOptions(\%opt, 
         'help|h', 'version', 'man',
-        'checkpoint=s', 'conndelay=s', 'interval=s', 'threshold=s',
+        'checkpoint=s', 'conndelay=s',
         'firewall=s', 'iptables=s', 'iptablesargs=s',
         'debug=s','logpolicy=s',
         ) or exit(1);
     if($opt{help})      { pod2usage(1) }
     if($opt{man})       { pod2usage(-exitstatus => 0, -verbose => 2) }
-    if ($opt{version})	{ print "cyruslogwatch $VERSION\n"; exit(0) }
+    if ($opt{version})	{ print "amavislogwatch $VERSION\n"; exit(0) }
 
-# Read cyrus log from the standard input
+# Read amavis log from the standard input
     MAILLOG: while (<>)
     {
         # Create a new checkpoint, after saving the old one
@@ -87,7 +84,7 @@ sub main
             $writeckp = 100;
         }
         if ($loadckp == 0) { $loadckp = 10000; $writeckp = 100; }
-        # Reload the IP addresses hash from the last checkpoint after 10000 cyrus log lines
+        # Reload the IP addresses hash from the last checkpoint after 10000 amavis log lines
         if ($loadckp == 10000) {
             if ($opt{debug} eq "yes") {printf STDERR "%s -F %s\n", $opt{iptables}, $opt{firewall};}
             system(sprintf("%s -F %s", $opt{iptables}, $opt{firewall}));
@@ -134,14 +131,13 @@ sub main
         }
         $loadckp--;
         $writeckp--;
-        next unless (/$RE_badpop3/) || (/$RE_badpop3s/) || (/$RE_badimap/) || (/$RE_badimaps/);
+        next unless (/$RE_amablock/);
         # Decrease the count for existing records
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
-            if ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0)) {
+            if ((time() > $modified + $opt{interval}) && ($cnt > 0)) {
             # The counter decrease rate is (interval from last modification) / (threshold) / 2 
-            # Decreasing the counter avoids the blocking of IP addresses of users who happen to mistype passwords
-                my $decr = (time() - $modified) / $opt{threshold} / 2;
+                my $decr = (time() - $modified) / 2;
                 if ($decr > $cnt) {
                     $decr = $cnt;
                 }
@@ -151,16 +147,14 @@ sub main
                 if ($opt{debug} eq "yes") {printf STDERR "decr %d %d %s, %s\n", $loadckp, $writeckp, $ipaddress, $iplist{$ipaddress};}
             }
         }
-        $threshold = $opt{threshold};
-        # Set the connection delay for IP addresses that are sources of failed logins
-        if ((/$RE_authfail/) || (/$RE_nouser/)) {
+        # Set the connection delay for IP addresses that are sources of blocked emails
+        if ((/$RE_amaspam/) || (/$RE_amainfect/) || (/$RE_amabanned/)) {
             $delay = $opt{conndelay};
         } else {
             next;
         }
-        my $ipaddr = $1;
+        my $ipaddr = /$RE_amablocked/;
         if (exists $iplist{$ipaddr}) {
-	# Update an existing record
             ($counter, $fwflag, $modtime, $exptime) = split(/:/,$iplist{$ipaddr});
         } else {
         # Create new record
@@ -206,21 +200,18 @@ __END__
 
 =head1 NAME
 
-cyruslogwatch - Cyrus logfile-based dynamic firewall update
+amavislogwatch - Amavis logfile-based dynamic firewall update
 
 =head1 SYNOPSIS
 
-B<cyruslogwatch> [I<options>...]
+B<amavislogwatch> [I<options>...]
 
  -h, --help                   Display this help and exit.
      --version		      Display version and exit.
 
-     --checkpoint=PATH        Checkpoint file path (default: /var/lib/cyruslogwatch/checkpoint).
-     --interval=N             Sliding interval for failed logins counting (seconds, default: 60).
-     --threshold=N            Connections rate threshold (default: 10 / interval).
-     --conndelay=N            Connection delay for a source of failed logins above the limit set by
-                              the --threshold parameter (default: 900 seconds).
-     --firewall=STRING        Iptables chain name (default: CYRUSFW)
+     --checkpoint=PATH        Checkpoint file path (default: /var/lib/amavislogwatch/checkpoint).
+     --conndelay=N            Connection delay for a source of blocked emails (default: 900 seconds).
+     --firewall=STRING        Iptables chain name (default: AMAVISFW)
      --iptables=PATH          Iptables executable path (default: /sbin/iptables)
      --iptablesargs=STRING    Iptables arguments (default: -m tcp -p tcp)
      --debug=STRING           yes = debugging on, no (default) = no debugging
@@ -229,12 +220,12 @@ B<cyruslogwatch> [I<options>...]
 
 =head1 DESCRIPTION
 
-Cyruslogwatch reads the cyrus logfile from STDIN, records the sources of failed IMAP or POP3 logins and maintains a chain of iptables rules that
+Amavislogwatch reads the amavis logfile from STDIN, records the sources of blocked email messages and maintains a chain of iptables rules that
 block any further connections from the same sources for a predetermined time interval.
 
-The iptables rules added by cyruslogwatch are deleted after a preset interval.
+The iptables rules added by amavislogwatch are deleted after a preset interval.
 
-Cyruslogwatch saves its internal hash table in a checkpoint file at regular intervals. At startup cyruslogwatch flushes its iptables chain, then
+Amavislogwatch saves its internal hash table in a checkpoint file at regular intervals. At startup amavislogwatch flushes its iptables chain, then
 loads its hash table from the checkpoint file (if it exists) and updates its iptables chain.
 
 =head1 USAGE
@@ -243,9 +234,9 @@ loads its hash table from the checkpoint file (if it exists) and updates its ipt
 
 =over 4
 
-=item * An iptables chain referenced in the INPUT iptables chain and named CYRUSFW (default). B<Note: do not filter any internal networks through the CYRUSFW chain.>
+=item * An iptables chain referenced in the INPUT iptables chain and named AMAVISFW (default). B<Note: do not filter any internal networks through the AMAVISFW chain.>
 
-Example - POP3(s) and IMAP(s) connections from local networks (local interface, 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16) bypass the CYRUSFW chain:
+Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16) bypass the AMAVISFW chain:
 
     Chain INPUT (policy ACCEPT 0 packets, 0 bytes)
     target     prot opt in     out     source               destination
@@ -253,12 +244,9 @@ Example - POP3(s) and IMAP(s) connections from local networks (local interface, 
     ACCEPT     all  --  *      *       10.0.0.0/8           0.0.0.0/0
     ACCEPT     all  --  *      *       172.16.0.0/12        0.0.0.0/0
     ACCEPT     all  --  *      *       192.168.0.0/16       0.0.0.0/0
-    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:110
-    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:143
-    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:993
-    CYRUSFW    tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:995
+    AMAVISFW   tcp  --  *      *       0.0.0.0/0            0.0.0.0/0           tcp dpt:25
 
-=item * A directory for the checkpoint file - default /var/lib/cyruslogwatch/
+=item * A directory for the checkpoint file - default /var/lib/amavislogwatch/
 
 =back
 
@@ -266,15 +254,11 @@ Example - POP3(s) and IMAP(s) connections from local networks (local interface, 
 
 =over 4
 
-=item * --checkpoint=PATH        Checkpoint file path (default: /var/lib/cyruslogwatch/checkpoint).
-
-=item * --interval=N             Sliding interval for failed logins counting (default: 60 seconds).
-
-=item * --threshold=N            Failed logins rate threshold (default: 10 / interval). Failed logins from the same source that exceed this threshold during the sliding interval trigger the insertion of a blocking rule in the CYRUSFW chain.
+=item * --checkpoint=PATH        Checkpoint file path (default: /var/lib/amavislogwatch/checkpoint).
 
 =item * --conndelay=N            Connection delay for a source of failed logins above the limit set by the --threshold parameter (default: 900 seconds).
 
-=item * --firewall=STRING        Iptables chain name (default: CYRUSFW).
+=item * --firewall=STRING        Iptables chain name (default: AMAVISFW).
 
 =item * --iptables=PATH          Iptables executable path (default: /sbin/iptables).
 
@@ -290,43 +274,19 @@ Example - POP3(s) and IMAP(s) connections from local networks (local interface, 
 
 =over 4
 
-=item * # tail --follow=name /var/log/mail.log | cyruslogwatch --checkpoint=/var/spool/filter/cyruslogwatch-ckp --threshold=5 --firewall=CYRUSFW --logpolicy=yes
+=item * # tail --follow=name /var/log/mail.log | amavislogwatch --checkpoint=/var/spool/filter/amavislogwatch-ckp --conndelay=900 --firewall=AMAVISFW --logpolicy=yes
 
 =back
 
 =head1 HISTORY
 
-B<2014/07/07>
+B<2014/07/08>
 
-  Added more comments
+  Updated comments
 
-B<2013/11/08>
+B<2013/11/14>
 
-  Minor fixes
-
-B<2013/03/22>
-
-  Bug fix:
-
-  - 'badlogin' regex modified to recognize hosts without hostname string
-
-B<2013/03/12>
-
-  Bug fix:
-
-  - Removed the '-m state --state NEW' parameter in the filter command lines
-
-B<2013/02/24>
-
-  Updates and bug fixes:
-
-  - Comments added
-  - Slowing the record counter decrease rate to 1/2 of the increase rate
-  - Changing the LOG rule name to the actual name of the CYRUSFW chain
-
-B<2013/02/23>
-
-  Initial Public Version (cyruslogwatch)
+  Initial Public Version (amavislogwatch)
 
 =head1 AUTHOR
 
