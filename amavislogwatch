@@ -21,10 +21,10 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='amavislogwatch-20140708';
+my $VERSION='amavislogwatch-20140709';
 
 # Regular expressions used in maillog processing
-my $RE_client_ip      = qr/ .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]:.+ /;    # [1.2.3.4]:... 
+my $RE_client_ip       = qr/ .+\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]:.+ /;    # [1.2.3.4]:... 
 my $RE_amablock        = qr/amavis\[.+\]: .+ Blocked /;
 my $RE_amaspam         = qr/ Blocked SPAM /;
 my $RE_amainfect       = qr/ Blocked INFECTED /;
@@ -54,7 +54,6 @@ sub main
     my $modtime;                    # Firewall rule last update
     my $exptime;                    # Firewall rule expiration time
     my $delay;
-    my $threshold;
     my $loadckp = 10000;            # Reload the IP addesses hash table after every 10000 logfile lines
     my $writeckp = 100;             # Store the hash table into a checkpoint file every 100 logfile lines
 
@@ -136,7 +135,7 @@ sub main
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
             if ((time() > $modified + $opt{interval}) && ($cnt > 0)) {
-            # The counter decrease rate is (interval from last modification) / (threshold) / 2 
+            # The counter decrease rate is (interval from last modification) / 2 
                 my $decr = (time() - $modified) / 2;
                 if ($decr > $cnt) {
                     $decr = $cnt;
@@ -153,7 +152,8 @@ sub main
         } else {
             next;
         }
-        my $ipaddr = /$RE_amablocked/;
+	/$RE_amablocked/;
+        my $ipaddr = $1;
         if (exists $iplist{$ipaddr}) {
             ($counter, $fwflag, $modtime, $exptime) = split(/:/,$iplist{$ipaddr});
         } else {
@@ -170,9 +170,9 @@ sub main
             $exptime = $modtime + $delay;
         }
         # Increase the counter associated to the IP address for each failed login
-        # If it becomes greater than the threshold add a blocking rule for the IP address
+        # If it becomes greater than 0 add a blocking rule for the IP address
         $counter++;
-        if ($counter > $threshold) {
+        if ($counter > 0) {
             if ($fwflag == 0) {
                 $fwflag++;
                 if (($opt{logpolicy} eq "yes") && ($opt{debug} eq "yes")) {printf STDERR "%s -A %s %s -s %s -j LOG --log-prefix %s-\n", $opt{iptables}, $opt{firewall}, $opt{iptablesargs}, $ipaddr, $opt{firewall};}
@@ -256,7 +256,7 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 
 =item * --checkpoint=PATH        Checkpoint file path (default: /var/lib/amavislogwatch/checkpoint).
 
-=item * --conndelay=N            Connection delay for a source of failed logins above the limit set by the --threshold parameter (default: 900 seconds).
+=item * --conndelay=N            Connection delay for a source of blocked email (default: 900 seconds).
 
 =item * --firewall=STRING        Iptables chain name (default: AMAVISFW).
 
@@ -279,6 +279,10 @@ Example - SMTP connections from local networks (local interface, 10.0.0.0/8, 172
 =back
 
 =head1 HISTORY
+
+B<2014/07/09>
+
+  Removed references to the threshold variable
 
 B<2014/07/08>
 

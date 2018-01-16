@@ -21,7 +21,7 @@
 use strict;
 use Getopt::Long 2.25 qw(:config posix_default no_ignore_case);
 use Pod::Usage;
-my $VERSION='cyruslogwatch-20140707';
+my $VERSION='cyruslogwatch-20180115';
 
 # Regular expressions used in maillog processing
 my $RE_client_ip       = qr/ \[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;    # [1.2.3.4]
@@ -31,6 +31,7 @@ my $RE_badpop3         = qr/pop3\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}
 my $RE_badpop3s        = qr/pop3s\[.+\]: badlogin: .*\[(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\]/;
 my $RE_nouser          = qr/$RE_client_ip .+: user not found: checkpass failed/;
 my $RE_authfail        = qr/$RE_client_ip .+: authentication failure: checkpass failed/;
+my $RE_passfail        = qr/$RE_client_ip .+: authentication failure: Password verification failed/;
 
 # IP addresses hash
 my %iplist;
@@ -138,10 +139,14 @@ sub main
         # Decrease the count for existing records
         foreach my $ipaddress (keys %iplist) {
             my ($cnt, $fwf, $modified, $expires) = split(/:/,$iplist{$ipaddress});
-            if ((time() > $modified + $opt{interval} / $opt{threshold}) && ($cnt > 0)) {
+            $threshold = $opt{threshold};
+            if ($threshold < 1) {
+            	$threshold = 1;
+            }
+            if ((time() > $modified + $opt{interval} / $threshold) && ($cnt > 0)) {
             # The counter decrease rate is (interval from last modification) / (threshold) / 2 
             # Decreasing the counter avoids the blocking of IP addresses of users who happen to mistype passwords
-                my $decr = (time() - $modified) / $opt{threshold} / 2;
+                my $decr = (time() - $modified) / $threshold / 2;
                 if ($decr > $cnt) {
                     $decr = $cnt;
                 }
@@ -153,7 +158,7 @@ sub main
         }
         $threshold = $opt{threshold};
         # Set the connection delay for IP addresses that are sources of failed logins
-        if ((/$RE_authfail/) || (/$RE_nouser/)) {
+        if ((/$RE_authfail/) || (/$RE_passfail/) || (/$RE_nouser/)) {
             $delay = $opt{conndelay};
         } else {
             next;
@@ -296,6 +301,16 @@ Example - POP3(s) and IMAP(s) connections from local networks (local interface, 
 
 =head1 HISTORY
 
+B<2018/01/15>
+
+  Added "Password verification failed" pattern
+
+B<2014/07/09>
+
+  Bug fix:
+  
+  - threshold = 0 leads to division by 0
+  
 B<2014/07/07>
 
   Added more comments
