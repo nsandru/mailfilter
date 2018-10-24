@@ -32,6 +32,7 @@ $AddUnixListenSocket /var/spool/postfix/dev/log
 
 /etc/rsyslog.d/postfixlogwatch.conf:
 
+```
 module(load="omprog")
 if $syslogfacility-text == 'mail' then action(type="omprog" binary="/usr/local/sbin/postfixlogwatch_run" template="RSYSLOG_TraditionalFileFormat")
 if $syslogfacility-text == 'mail' then action(type="omprog" binary="/usr/local/sbin/amavislogwatch_run" template="RSYSLOG_TraditionalFileFormat")
