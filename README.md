@@ -19,6 +19,8 @@ All utilities are distributed under GPLv3 license
 
 ## Usage with rsyslog:
 
+Copy the *_run wrapper scripts in /usr/local/sbin. Update the values of the parameters if necessary.
+
 Add the following scripts in /etc/rsyslog.d:
 
 /etc/rsyslog.d/postfix.conf:

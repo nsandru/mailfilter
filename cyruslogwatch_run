@@ -1,0 +1,16 @@
+#!/bin/bash
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+RUNNING=`ps xa | grep cyruslogwatch | grep perl | wc -l`
+test $RUNNING -gt 0 && killall cyruslogwatch
+sleep 20
+DATE=`date -d now '+%s'`
+EXP=`expr $DATE + 10800`
+(for IPADDR in `iptables -L IMAPFW -n | awk '{print $4}' | grep '^[1-9]' | grep -v / | sort -u` ; do
+  grep -w "$IPADDR" /var/tmp/cyruslogwatch-ckp >/dev/null && continue
+  echo "$IPADDR 1:1:${DATE}:${EXP}"
+done) > /var/tmp/cyruslogwatch-ckp.old
+cat /var/tmp/cyruslogwatch-ckp.old >> /var/tmp/cyruslogwatch-ckp
+/sbin/iptables -F IMAPFW
+/usr/local/sbin/cyruslogwatch --checkpoint=/var/tmp/cyruslogwatch-ckp --conndelay=10800 --firewall=IMAPFW --logpolicy=no
+exit 0

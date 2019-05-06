@@ -1,0 +1,39 @@
+#!/bin/bash
+#
+# postfixlogwatch_run
+#
+# Wrapper script for postfixlogwatch to be used with a logging utility (rsyslog for example)
+#
+# Configuration parameters:
+# see '/usr/local/sbin/postfixlogwatch --help'
+
+checkpoint=/var/tmp/postfixlogwatch-ckp
+conndelay=3600
+threshold=20
+nouserthreshold=2
+blockdelay=10800
+netblockthreshold=10
+firewall=SMTPFW
+logpolicy=no
+# END CONFIGURATION
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+HOSTNAME=`hostname -f`
+IPADDR=`host $HOSTNAME | awk '{print $4}'`
+RUNNING=`ps xa | grep postfixlogwatch | grep perl | wc -l`
+test $RUNNING -gt 0 && killall postfixlogwatch
+sleep 10
+DATE=`date -d now '+%s'`
+EXP=`expr $DATE + 10800`
+/sbin/iptables -L ${firewall} -n >/dev/null 2>&1 || {
+  /sbin/iptables -N ${firewall}
+  /sbin/iptables -I INPUT -j ${firewall} -m tcp -p tcp --match multiport --dports 25,587 -d ${IPADDR}/32
+}
+(for IPADDR in `iptables -L SMTPFW -n | awk '{print $4}' | grep '^[1-9]' | grep -v / | sort -u` ; do
+  grep -w "$IPADDR" ${checkpoint} > /dev/null && continue
+  echo "$IPADDR 1:1:${DATE}:${EXP}"
+done) > ${checkpoint}.old
+cat ${checkpoint}.old >> ${checkpoint}
+/sbin/iptables -F ${firewall}
+/usr/local/sbin/postfixlogwatch ${checkpoint} ${conndelay} ${threshold} ${nouserthreshold} ${blockdelay} ${netblockthreshold} ${firewall} ${logpolicy}
+exit 0
