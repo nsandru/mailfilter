@@ -43,3 +43,5 @@ if $syslogfacility-text == 'mail' then action(type="omprog" binary="/usr/local/s
 
 --
 Nick Sandru
+
+New branch test
